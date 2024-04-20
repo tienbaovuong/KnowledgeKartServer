@@ -1,0 +1,4 @@
+[default]
+ALLOWED_ORIGINS = ["http://localhost:3000"]
+INTERNAL_TOKEN = "default_token"
+MONGO_DSN = "mongodb://mongodb:27017/ClusteringDB"

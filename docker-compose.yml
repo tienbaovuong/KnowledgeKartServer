@@ -1,0 +1,31 @@
+version: '3'
+services:
+  mongodb:
+    image: bitnami/mongodb
+    environment:
+      ALLOW_EMPTY_PASSWORD: "yes"
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb:/bitnami/mongodb
+
+  knowledgekart:
+    build: .
+    depends_on:
+      - mongodb
+      - redis
+    ports:
+      - "8001:80"
+
+  redis:
+    image: bitnami/redis
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  mongodb:
+  redis:
