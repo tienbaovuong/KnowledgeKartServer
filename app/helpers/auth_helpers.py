@@ -43,7 +43,7 @@ def decode_token(
     except jwt.InvalidTokenError:
         raise PermissionDeniedException('Invalid token. Please log in again.')
     
-def login(user_id: str):
+def login_token(user_id: str):
     payload = {
         "sub": "admin",
         "id": user_id,
@@ -59,4 +59,4 @@ def get_current_user(token: str= Depends(oauth2_scheme)):
         raise PermissionDeniedException(
             'Signature expired. Please log in again.'
         )
-    return user.get("sub")
+    return user.get("id")

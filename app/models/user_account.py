@@ -1,8 +1,18 @@
-from app.models.base import RootModel, RootEnum
+from pymongo import ASCENDING, IndexModel
 
-class ClusterHistory(RootModel):
+from app.models.base import RootModel
+
+class UserAccount(RootModel):
     class Collection:
         name = "user_account"
+        indexes = [
+            IndexModel(
+                [
+                    ("email", ASCENDING),
+                ],
+                unique=True,
+            )
+        ]
 
     user_name: str
     email: str

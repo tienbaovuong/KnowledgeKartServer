@@ -1,9 +1,11 @@
-from app.dto.common import BaseResponse
-from app.dto.auth_dto import LoginRequest, LoginResponseData, LoginResponse, SignUpRequest
-from fastapi import APIRouter
-from app.helpers.auth_helpers import login
+from fastapi import APIRouter, Depends
 
-router = APIRouter(tags=['Auth'])
+from app.dto.common import BaseResponse
+from app.dto.auth_dto import LoginRequest, LoginResponseData, LoginResponse, SignUpRequest, UserResponse
+from app.services.account_services import AuthService
+from app.helpers.auth_helpers import get_current_user
+
+router = APIRouter(tags=['Auth'], prefix="/account")
 
 
 @router.post(
@@ -13,10 +15,12 @@ router = APIRouter(tags=['Auth'])
 async def user_login(
     data: LoginRequest
 ):
-    user_id = data.email
-    access_token = login(user_id)
+    access_token = await AuthService.login(
+        email=data.email, 
+        password=data.password
+    )
     return LoginResponse(
-        message='Loged in',
+        message='Logged in',
         data=LoginResponseData(access_token=access_token)
     )
 
@@ -28,9 +32,26 @@ async def user_login(
 async def user_signup(
     data: SignUpRequest
 ):
-    # TODO: Implement user signup logic
-    # - Validate signup request
+    AuthService.signup(
+        user_name=data.user_name,
+        email=data.email,
+        password=data.password
+    )
     return BaseResponse(
-        message='User created successfully',
+        message='Succeed',
         error_code=0
+    )
+
+
+@router.get(
+    '/user',
+    response_model=UserResponse
+)
+async def get_current_user(
+    user_id: str = Depends(get_current_user),
+):
+    user = AuthService.get_user_by_id(user_id)
+    return UserResponse(
+        message='Succeed',
+        data=user
     )
