@@ -32,7 +32,7 @@ async def user_login(
 async def user_signup(
     data: SignUpRequest
 ):
-    AuthService.signup(
+    await AuthService.signup(
         user_name=data.user_name,
         email=data.email,
         password=data.password
@@ -50,7 +50,7 @@ async def user_signup(
 async def get_current_user(
     user_id: str = Depends(get_current_user),
 ):
-    user = AuthService.get_user_by_id(user_id)
+    user = await AuthService.get_user_by_id(user_id)
     return UserResponse(
         message='Succeed',
         data=user
