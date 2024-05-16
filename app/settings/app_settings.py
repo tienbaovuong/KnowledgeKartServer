@@ -22,6 +22,7 @@ class AppSettings(BaseSettings):
         settings.validators.register(
             Validator("ALLOWED_ORIGINS", condition=must_be_list, must_exist=True),
             Validator("MONGO_DSN", must_exist=True),
+            Validator("REDIS", must_exist=True)
         )
         # Fire the validator
         settings.validators.validate()
@@ -33,3 +34,7 @@ class AppSettings(BaseSettings):
     @property
     def mongo_dsn(self):
         return settings.get("MONGO_DSN")
+    
+    @property
+    def redis_dsn(self):
+        return settings.get("REDIS")

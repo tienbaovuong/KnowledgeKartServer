@@ -5,6 +5,11 @@ from beanie import init_beanie, Document
 from motor import motor_asyncio
 
 from app.settings.app_settings import AppSettings
+from app.models.user_account import UserAccount
+from app.models.library import Library
+from app.models.question import Question
+from app.models.car_race import CarRace
+from app.models.car_race_session import CarRaceSession
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -49,6 +54,11 @@ async def initialize():
     await init_beanie(
         client.get_database(),
         document_models=[
+            UserAccount,
+            Library,
+            Question,
+            CarRace,
+            CarRaceSession
         ],
     )
 

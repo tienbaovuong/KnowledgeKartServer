@@ -7,7 +7,8 @@ from pydantic import Field, BaseModel
 
 
 class RootModel(Document):
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now())
+    updated_at: datetime = Field(default_factory=datetime.now())
 
     @classmethod
     def random(cls, *args: Mapping[str, Any], size: int = 1):

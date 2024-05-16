@@ -12,11 +12,6 @@ class BaseResponseData(BaseResponse):
     data: Union[dict, str, int, None]
 
 
-class BasePaginationRequest(BaseModel):
-    limit: Optional[int] = 25
-    page: Optional[int] = 1
-
-
 class BasePaginationResponseData(BaseModel):
     total: int
     items: List
