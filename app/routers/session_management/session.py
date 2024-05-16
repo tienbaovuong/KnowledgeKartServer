@@ -1,12 +1,12 @@
 import json
 import asyncio
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.dto.common import BaseResponse
 from app.helpers.auth_helpers import get_current_user
 from app.services.live_session_services import LiveSessionService
 from app.helpers.exceptions import BadRequestException
-from app.database import pub, psub
+from app.database import pub, psub, redis
 
 router = APIRouter(tags=["Car Race Live Session"], prefix="/session")
 
@@ -49,10 +49,11 @@ async def user_session_connect(websocket: WebSocket, session_id: str):
     temp_session = await LiveSessionService.get_temp_session(session_id)
     if not temp_session:
         statis_session = await LiveSessionService.get_statis_session(session_id)
-        await websocket.send_json(statis_session.dict())
+        await websocket.send_json(statis_session)
         await websocket.close()
     await websocket.send_text(json.dumps(temp_session))
-    async with psub as p:
+    new_psub = redis.pubsub()
+    async with new_psub as p:
         await p.subscribe(f"channel:{session_id}")
         if p != None:
             while True:
@@ -84,8 +85,8 @@ async def session_connect(websocket: WebSocket, session_id: str, client_id: str)
         raise BadRequestException("Missing client id")
     temp_session = await LiveSessionService.get_temp_session(session_id)
     if not temp_session:
-        statis_session = await LiveSessionService.get_statis_session(session_id)
-        await websocket.send_json(statis_session.dict())
+        static_session = await LiveSessionService.get_statis_session(session_id)
+        await websocket.send_json(static_session)
         await websocket.close()
     await websocket.send_json(temp_session)
     try:
@@ -98,11 +99,10 @@ async def session_connect(websocket: WebSocket, session_id: str, client_id: str)
         done, pending = await asyncio.wait(
             [
                 get_user_action(websocket, session_id),
-                send_user_update(websocket),
+                send_user_update(websocket, session_id),
             ],
             return_when=asyncio.FIRST_COMPLETED,
         )
-        await websocket.close()
         await pub.publish(
             f"channel:{session_id}",
             json.dumps({"topic": "client_leave", "value": client_id}),
@@ -117,30 +117,42 @@ async def session_connect(websocket: WebSocket, session_id: str, client_id: str)
 # Assist function
 async def get_user_action(websocket: WebSocket, session_id: str):
     while True:
-        message = await websocket.receive_json()
-        await pub.publish(
-            f"channel:{session_id}",
-            json.dumps({"topic": "client_update", "value": message}),
-        )
+        try:
+            message = await websocket.receive_json()
+            await pub.publish(
+                f"channel:{session_id}",
+                json.dumps({"topic": "client_update", "value": message}),
+            )
+        except WebSocketDisconnect:
+            print("websocket disconnected")
+            return
 
 
-async def send_user_update(websocket: WebSocket):
-    async with psub as p:
-        while True:
-            # Get message from redis channel
-            message = await p.get_message(ignore_subscribe_messages=True, timeout=0.5)
-            await asyncio.sleep(0)
-            if message != None:
-                data = json.loads(message["data"])
-                topic = data["topic"]
-                value = data["value"]
-                if topic in [
-                    "update_status",
-                    "client_update_users",
-                    "client_update_result",
-                ]:
-                    await websocket.send_text(
-                        json.dumps({"event": topic, "value": value})
+async def send_user_update(websocket: WebSocket, session_id: str):
+    new_psub = redis.pubsub()
+    try: 
+        async with new_psub as p:
+            await p.subscribe(f"channel:{session_id}")
+            if p != None:
+                while True:
+                    # Get message from redis channel
+                    message = await p.get_message(
+                        ignore_subscribe_messages=True, timeout=0.5
                     )
-                if topic == "update_status" and value == "ENDED":
-                    await websocket.close()
+                    await asyncio.sleep(0)
+                    if message != None:
+                        data = json.loads(message["data"])
+                        topic = data["topic"]
+                        value = data["value"]
+                        if topic in [
+                            "update_status",
+                            "client_update_users",
+                            "client_update_result",
+                        ]:
+                            await websocket.send_text(
+                                json.dumps({"event": topic, "value": value})
+                            )
+                        elif topic == "close_websocket":
+                            await websocket.close()
+    except WebSocketDisconnect:
+        return

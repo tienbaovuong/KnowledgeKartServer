@@ -1,5 +1,5 @@
 [default]
-ALLOWED_ORIGINS = ["http://localhost:3000"]
+ALLOWED_ORIGINS = ["http://localhost:3000", "https://knowledgekart.netlify.app"]
 INTERNAL_TOKEN = "default_token"
 MONGO_DSN = "mongodb://mongodb:27017/KnowledgeKartDB"
 REDIS = "redis://redis:6379/0"

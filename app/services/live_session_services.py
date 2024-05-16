@@ -21,34 +21,42 @@ class LiveSessionService:
     @staticmethod
     async def get_temp_session(session_id: str):
         # Gather questions, settings, session status, list player, player data and ranking
-        status = await redis.hget(f"settings:{session_id}", "status")
-        if not status or status == SessionStatus.ENDED:
+        status = await pub.hget(f"settings:{session_id}", "status")
+        if not status or status == "ENDED":
             return None
         settings, questions, client_list, client_data, ranking = await asyncio.gather(
-            redis.hgetall(f"settings:{session_id}"),
-            json.loads(redis.get(f"questions:{session_id}")),
-            redis.smembers(f"current_clients:{session_id}"),
-            redis.hgetall(f"results:{session_id}"),
-            json.loads(redis.get(f"ranking:{session_id}")),
+            pub.hgetall(f"settings:{session_id}"),
+            pub.get(f"questions:{session_id}"),
+            pub.smembers(f"current_clients:{session_id}"),
+            pub.hgetall(f"results:{session_id}"),
+            pub.get(f"ranking:{session_id}"),
         )
+        if not ranking:
+            ranking = "[]"
+        for key, value in client_data.items():
+            client_data[key] = json.loads(value)
         session = {
-            "status": settings["status"],
+            "session_status": settings["status"],
             "bonus": settings["bonus"],
             "penalty": settings["penalty"],
-            "questions": questions,
-            "client_list": client_list,
+            "session_name": settings["session_name"],
+            "questions": json.loads(questions),
+            "client_list": list(client_list),
             "client_data": client_data,
-            "ranking": ranking,
+            "ranking": json.loads(ranking),
         }
         return session
 
     @staticmethod
-    async def get_statis_session(session_id: str) -> SessionFullResponseData:
+    async def get_statis_session(session_id: str) -> dict:
         query = CarRaceSession.find_one({"_id": PydanticObjectId(session_id)})
         session = await query.project(SessionFullResponseData)
         if not session:
             raise NotFoundException("Session not found")
-        return session
+        return_data = session.dict(
+            exclude={"id", "_id", "car_race_id", "created_at", "updated_at"}
+        )
+        return return_data
 
     @staticmethod
     async def start(user_id: str, session_id: str):
@@ -62,6 +70,7 @@ class LiveSessionService:
             "updated_at": datetime.now(),
         }
         await session.update({"$set": update_data})
+        await redis.hset(f"settings:{session_id}", "status", "STARTED")
         await pub.publish(
             f"channel:{session_id}",
             json.dumps({"topic": "update_status", "value": "STARTED"}),
@@ -79,6 +88,7 @@ class LiveSessionService:
             "updated_at": datetime.now(),
         }
         await session.update({"$set": update_data})
+        await redis.hset(f"settings:{session_id}", "status", "ENDED")
         await pub.publish(
             f"channel:{session_id}",
             json.dumps({"topic": "update_status", "value": "ENDED"}),
@@ -105,24 +115,22 @@ async def start_session_in_background(session_id: str, start_time: datetime):
         if p != None:
             # On create session
             loop_time = datetime.now()
-            status = SessionStatus.CREATED
+            status = "CREATED"
             message_queue = Queue()
             await redis.set(f"questions:{session_id}", json.dumps(parsed_question_list))
             await redis.hset(
                 f"settings:{session_id}",
                 mapping={
-                    "status": SessionStatus.CREATED,
+                    "status": "CREATED",
                     "bonus": car_race.bonus_time_setting,
                     "penalty": car_race.penalty_time_setting,
+                    "session_name": session.car_race_session_name,
                 },
             )
             while True:
                 # Loop to get published message from redis
                 total_delta = datetime.now() - start_time
-                if (
-                    total_delta.total_seconds() > 15 * 60
-                    and status == SessionStatus.CREATED
-                ):
+                if total_delta.total_seconds() > 15 * 60 and status == "CREATED":
                     # End session if stayed in CREATED for over 15 minutes
                     await pub.publish(
                         f"channel:{session_id}",
@@ -133,12 +141,19 @@ async def start_session_in_background(session_id: str, start_time: datetime):
                         "updated_at": datetime.now(),
                     }
                     await session.update({"$set": update_data})
+                    await redis.hset(f"settings:{session_id}", "status", "ENDED")
+                    await pub.publish(
+                                f"channel:{session_id}",
+                                json.dumps(
+                                    {
+                                        "topic": "close_websocket",
+                                        "value": ""
+                                    }
+                                ),
+                            )
                     break
 
-                if (
-                    total_delta.total_seconds() > 60 * 60
-                    and status == SessionStatus.STARTED
-                ):
+                if total_delta.total_seconds() > 60 * 60 and status == "STARTED":
                     # End session if total time over 15 minutes
                     await pub.publish(
                         f"channel:{session_id}",
@@ -149,6 +164,16 @@ async def start_session_in_background(session_id: str, start_time: datetime):
                         "updated_at": datetime.now(),
                     }
                     await session.update({"$set": update_data})
+                    await redis.hset(f"settings:{session_id}", "status", "ENDED")
+                    await pub.publish(
+                                f"channel:{session_id}",
+                                json.dumps(
+                                    {
+                                        "topic": "close_websocket",
+                                        "value": ""
+                                    }
+                                ),
+                            )
                     break
                 # Get message from redis channel
                 message = await p.get_message(
@@ -161,11 +186,14 @@ async def start_session_in_background(session_id: str, start_time: datetime):
                     value = data["value"]
                     if topic == "update_status":
                         status = value
-                        await redis.hset(f"settings:{session_id}", "status", value)
-                        if value == SessionStatus.ENDED:
+                        if value == "ENDED":
                             # Update temp result from redis to MongoDB when session ended
-                            update_result = await redis.hgetall(f"results:{session_id}")
-                            ranking = await redis.get(f"ranking:{session_id}")
+                            update_result = await pub.hgetall(f"results:{session_id}")
+                            ranking = await pub.get(f"ranking:{session_id}")
+                            if not ranking:
+                                ranking = "[]"
+                            for key, value in update_result.items():
+                                update_result[key] = json.loads(value)
                             update_data = {
                                 "result": {
                                     "results": update_result,
@@ -173,7 +201,19 @@ async def start_session_in_background(session_id: str, start_time: datetime):
                                 },
                                 "updated_at": datetime.now(),
                             }
+                            await update_result_to_client(
+                                session_id, json.loads(ranking), update_result
+                            )
                             await session.update({"$set": update_data})
+                            await pub.publish(
+                                f"channel:{session_id}",
+                                json.dumps(
+                                    {
+                                        "topic": "close_websocket",
+                                        "value": ""
+                                    }
+                                ),
+                            )
                             break
                     elif topic == "client_update":
                         # Gather player action in a certain amount of time (1 second)
@@ -181,56 +221,68 @@ async def start_session_in_background(session_id: str, start_time: datetime):
                     elif topic == "client_join":
                         # Logic when someone joins the session
                         await redis.sadd(f"current_clients:{session_id}", value["uid"])
-                        await redis.hset(f"results:{session_id}", value["uid"], value)
+                        await redis.hset(
+                            f"results:{session_id}", value["uid"], json.dumps(value)
+                        )
                         await update_current_clients(session_id)
                     elif topic == "client_leave":
                         # Logic when someone leaves the session
-                        await redis.srem(f"current_clients:{session_id}", value["uid"])
+                        await redis.srem(f"current_clients:{session_id}", value)
                         await update_current_clients(session_id)
 
                 delta = datetime.now() - loop_time
-                if delta.total_seconds() >= 1:
+                qSize = message_queue.qsize()
+                if delta.total_seconds() >= 1 and qSize:
                     loop_time = datetime.now()
                     # Logic for player actions (batch)
-                    old_results: dict = await redis.hgetall(f"results:{session_id}")
-                    qSize = message_queue.qsize()
+                    old_results: dict = await pub.hgetall(f"results:{session_id}")
                     while message_queue.qsize():
                         # Player action data structure {uid, name, point, time}
                         new_update = message_queue.get()
                         uid = new_update["uid"]
-                        old_results[uid]["point"] = new_update["point"]
-                        old_results[uid]["time"] = new_update["time"]
+                        old_results[uid] = json.dumps(new_update)
                     # sort new results
                     if qSize:
-                        await redis.hset(
-                            f"results:{session_id}", mapping={**old_results}
-                        )
-                        ranking = []
-                        score_list = old_results.values()
-                        _logger.debug(score_list)
-                        sorted_score_list = sorted(
-                            score_list, key=lambda x: (-x["point"], x["time"])
-                        )
-                        for score in sorted_score_list:
-                            ranking.append(score["uid"])
-                        await redis.set(f"ranking:{session_id}", json.dumps(ranking))
-                        await update_result_to_client(session_id, ranking, old_results)
+                        try:
+                            await redis.hset(
+                                f"results:{session_id}", mapping={**old_results}
+                            )
+                            ranking = []
+                            score_list = list(old_results.values())
+                            for index, score in enumerate(score_list):
+                                score_list[index] = json.loads(score)
+                            sorted_score_list = sorted(
+                                score_list, key=lambda x: (-x["point"], x["time"])
+                            )
+                            for score in sorted_score_list:
+                                ranking.append(score["uid"])
+                            await redis.set(
+                                f"ranking:{session_id}", json.dumps(ranking)
+                            )
+                            for key, value in old_results.items():
+                                old_results[key] = json.loads(value)
+                            await update_result_to_client(
+                                session_id, ranking, old_results
+                            )
+                        except Exception as e:
+                            e.with_traceback()
+                            print(e)
 
 
 async def update_current_clients(session_id: str):
     client_lists, client_data = await asyncio.gather(
-        redis.smembers(f"current_clients:{session_id}"),
-        redis.hgetall(f"results:{session_id}"),
+        pub.smembers(f"current_clients:{session_id}"),
+        pub.hgetall(f"results:{session_id}"),
     )
-    _logger.debug(client_lists)
-    _logger.debug(client_data)
+    for key, value in client_data.items():
+        client_data[key] = json.loads(value)
     await pub.publish(
         f"channel:{session_id}",
         json.dumps(
             {
                 "topic": "client_update_users",
                 "value": {
-                    "player_list": client_lists,
+                    "player_list": list(client_lists),
                     "data": client_data,
                 },
             }
@@ -239,8 +291,6 @@ async def update_current_clients(session_id: str):
 
 
 async def update_result_to_client(session_id: str, ranking: list, client_data: dict):
-    _logger.debug(ranking)
-    _logger.debug(client_data)
     await pub.publish(
         f"channel:{session_id}",
         json.dumps(
