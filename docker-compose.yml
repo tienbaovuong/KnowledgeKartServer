@@ -1,17 +1,20 @@
 version: '3'
 services:
   mongodb:
-    image: bitnami/mongodb
+    image: arm64v8/mongo
     environment:
       ALLOW_EMPTY_PASSWORD: "yes"
     restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
-      - mongodb:/bitnami/mongodb
+      - mongodb:/arm64v8/mongodb
 
   knowledgekart:
     build: .
+    environment:
+      - JWT_ALGORITHM
+      - JWT_SECRET_KEY
     depends_on:
       - mongodb
       - redis
